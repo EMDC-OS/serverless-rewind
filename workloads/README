@@ -1,0 +1,3 @@
+- How to check peak RSS on python
+import resource
+resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
