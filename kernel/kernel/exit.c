@@ -717,6 +717,14 @@ void __noreturn do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
+	/* REWIND */
+	//if (tsk->rewindable == 1) 
+	//	printk(KERN_INFO "REWIND(exit): exit the rewindable task\n");	
+	if (tsk->exit_print == 1)
+		//printk(KERN_INFO "REWIND(exit): PF LIST TOTAL=%lu, ANON_READ=%lu, ANON_WRITE=%lu, FILE_READ=%lu, FILE_WRITE=%lu, FILE_SHARE=%lu, WP_COW=%lu, WP_REUSE=%lu, WP_FILE_REUSE=%lu\n", tsk->rewind_pf_cnt, tsk->rewind_pf_list[0], tsk->rewind_pf_list[1], tsk->rewind_pf_list[2], tsk->rewind_pf_list[3], tsk->rewind_pf_list[4], tsk->rewind_pf_list[5], tsk->rewind_pf_list[6], tsk->rewind_pf_list[7]);
+		printk(KERN_INFO "REWIND(exit): PF TIME = %llu ns\n", tsk->rewind_time);
+	tsk->rewindable = 0; // Stop recording change state
+
 	profile_task_exit(tsk);
 	kcov_task_exit(tsk);
 
@@ -800,7 +808,7 @@ void __noreturn do_exit(long code)
 
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
-
+	
 	exit_mm();
 
 	if (group_dead)

@@ -104,6 +104,9 @@
 
 #include <trace/events/sched.h>
 
+/* REWIND */
+#include <linux/mm_rewinder.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
@@ -1028,6 +1031,8 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->pmd_huge_pte = NULL;
 #endif
 	mm_init_uprobes_state(mm);
+
+	mm->rewindable = 0;
 
 	if (current->mm) {
 		mm->flags = current->mm->flags & MMF_INIT_MASK;
@@ -2086,6 +2091,31 @@ static __latent_entropy struct task_struct *copy_process(
 	clear_tsk_thread_flag(p, TIF_SYSCALL_EMU);
 #endif
 	clear_tsk_latency_tracing(p);
+
+	/* REWIND */
+	if (current->rewind_parent == 1) {
+		p->rewindable = 1;
+		p->rewind_cp = 1;
+	}
+	else {
+		p->rewindable = 0;
+		p->rewind_cp = 0;
+	}
+
+	if (current->child_print == 1)
+		p->exit_print = 1;
+	else
+		p->exit_print = 0;
+
+	p->rewind_time = 0;
+	p->rewind_parent = 0;
+	p->rewind_cnt = 0;
+	p->rewind_pf_cnt = 0;
+	p->child_print = 0;
+	p->rewind_vma_alloc = 0;
+	p->rewind_vma_reuse = 0;
+
+	p->rewind_reused_page = 0;
 
 	/* ok, now we should be set up.. */
 	p->pid = pid_nr(pid);

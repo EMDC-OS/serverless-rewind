@@ -73,6 +73,9 @@
 
 #include <trace/events/sched.h>
 
+/* REWIND */
+#include <linux/mm_rewinder.h>
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1224,6 +1227,11 @@ killed:
 	sig->notify_count = 0;
 	read_unlock(&tasklist_lock);
 	return -EAGAIN;
+}
+
+int rewind_de_thread(struct task_struct *tsk)
+{
+	return de_thread(tsk);
 }
 
 char *__get_task_comm(char *buf, size_t buf_size, struct task_struct *tsk)
