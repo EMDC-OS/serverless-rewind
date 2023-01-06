@@ -1291,6 +1291,15 @@ const char * const vmstat_text[] = {
 	"swap_ra",
 	"swap_ra_hit",
 #endif
+	"rewind_pgfault",
+	"rewind_pf_anon_read",
+	"rewind_pf_anon_write",
+	"rewind_pf_file_read",
+	"rewind_pf_file_write",
+	"rewind_pf_file_share",
+	"rewind_pf_wp_copy",
+	"rewind_pf_wp_reuse",
+	"rewind_pf_wp_copy_reuse",
 #endif /* CONFIG_VM_EVENTS_COUNTERS */
 };
 #endif /* CONFIG_PROC_FS || CONFIG_SYSFS || CONFIG_NUMA */

@@ -2515,6 +2515,11 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 	 * Do we have something in the page cache already?
 	 */
 	page = find_get_page(mapping, offset);
+
+	//if ((vmf->vma->vm_mm->owner->rewindable == 1) && (vmf->vma->vm_mm->owner->rewind_cp == 0)) {
+        //        printk(KERN_INFO "REWIND(file): Is the page exist? (%lx)\n", page);
+        //} 
+
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 		/*
 		 * We found the page, so try async readahead before
@@ -2674,6 +2679,23 @@ void filemap_map_pages(struct vm_fault *vmf,
 		last_pgoff = xas.xa_index;
 		if (alloc_set_pte(vmf, NULL, page))
 			goto unlock;
+
+		/* REWIND */
+		/*
+		if ((vmf->vma->vm_mm->owner->rewindable == 1) && (vmf->vma->vm_mm->owner->rewind_cp == 0)) {
+			//printk(KERN_INFO "REWIND(read): read fault around copy pte=0x%lx\n", pte_val(*vmf->pte));
+			if ((vmf->vma->vm_mm->owner->rewind_cnt == 0) || !(pte_flags(*((vmf->pte)+PAGE_SIZE)) & _PAGE_SOFTW2)) {
+	                        //printk(KERN_INFO "REWIND(read): read fault around copy\n");
+				set_pte_at(vmf->vma->vm_mm, vmf->address, (vmf->pte)+PAGE_SIZE, *vmf->pte);
+			}
+		}
+		*/
+		if ((vmf->vma->vm_mm->owner->rewindable == 1) && (vmf->vma->vm_mm->owner->rewind_cp == 0)) {
+			if (!(pte_flags(*((vmf->pte)+512)) & _PAGE_SOFTW2)) {
+				memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+			}
+		}
+
 		unlock_page(page);
 		goto next;
 unlock:

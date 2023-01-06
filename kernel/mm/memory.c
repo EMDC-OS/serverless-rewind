@@ -80,6 +80,11 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+/* REWIND */
+#include <linux/kthread.h>
+#include <linux/mm_rewinder.h>
+#include <asm/msr.h>
+
 #include "internal.h"
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
@@ -117,6 +122,11 @@ int randomize_va_space __read_mostly =
 #else
 					2;
 #endif
+
+/* REWIND */
+void pf_add_rewind_list(struct vm_fault *vmf, unsigned int rewindable, unsigned int flag) {
+	// Nothing...
+}
 
 static int __init disable_randmaps(char *s)
 {
@@ -755,8 +765,15 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	 * in the parent and the child
 	 */
 	if (is_cow_mapping(vm_flags) && pte_write(pte)) {
+		/* REWIND */
+                //if (!(pte_val(pte) & _PAGE_SOFTW2))
+                ptep_set_wrprotect(src_mm, addr, src_pte);
+                pte = pte_wrprotect(pte);
+                pte = pte_clear_flags(pte, _PAGE_SOFTW2);
+		/*
 		ptep_set_wrprotect(src_mm, addr, src_pte);
 		pte = pte_wrprotect(pte);
+		*/
 	}
 
 	/*
@@ -1013,7 +1030,10 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
 	pte_t *start_pte;
 	pte_t *pte;
 	swp_entry_t entry;
+	int upper_pgt, remove_upper;
 
+	
+	
 	tlb_change_page_size(tlb, PAGE_SIZE);
 again:
 	init_rss_vec(rss);
@@ -1021,11 +1041,41 @@ again:
 	pte = start_pte;
 	flush_tlb_batched_pending(mm);
 	arch_enter_lazy_mmu_mode();
+	
 	do {
 		pte_t ptent = *pte;
-		if (pte_none(ptent))
-			continue;
-
+		upper_pgt = 0;
+		remove_upper = 0;
+		if (pte_none(ptent)) {
+			if (mm->rewindable == 1) { 
+				pte_t tmp = *(pte+512);
+				if (pte_flags(tmp) & _PAGE_PRESENT) {
+					upper_pgt = 1;
+					pte = pte+512;
+					ptent = *pte;
+				} else
+					continue;
+			}
+			else
+				continue;
+		}
+upper:
+		if (remove_upper == 1) {
+			//printk(KERN_INFO "REWIND(zap): upper pte 0x%lx erase\n", (pte+512)->pte);
+			remove_upper = 0;
+			upper_pgt = 1;
+			pte = pte+512;
+			ptent = *pte;
+		}
+			
+		if (mm->rewindable == 1/*current->rewind_cnt > 0*/ && upper_pgt == 0) {
+			if (pte_pfn(*pte) == pte_pfn(*(pte+512))) {
+				pte_clear(mm, addr, pte+512);
+			} else if (!pte_none(*(pte+512))) {
+				remove_upper = 1;
+			}
+		}
+		
 		if (need_resched())
 			break;
 
@@ -1041,13 +1091,13 @@ again:
 				 */
 				if (details->check_mapping &&
 				    details->check_mapping != page_rmapping(page))
-					continue;
+					goto check;
 			}
 			ptent = ptep_get_and_clear_full(mm, addr, pte,
 							tlb->fullmm);
 			tlb_remove_tlb_entry(tlb, pte, addr);
 			if (unlikely(!page))
-				continue;
+				goto check;
 
 			if (!PageAnon(page)) {
 				if (pte_dirty(ptent)) {
@@ -1067,7 +1117,7 @@ again:
 				addr += PAGE_SIZE;
 				break;
 			}
-			continue;
+			goto check;
 		}
 
 		entry = pte_to_swp_entry(ptent);
@@ -1082,19 +1132,19 @@ again:
 				 */
 				if (details->check_mapping !=
 				    page_rmapping(page))
-					continue;
+					goto check;
 			}
 
 			pte_clear_not_present_full(mm, addr, pte, tlb->fullmm);
 			rss[mm_counter(page)]--;
 			page_remove_rmap(page, false);
 			put_page(page);
-			continue;
+			goto check;
 		}
 
 		/* If details->check_mapping, we leave swap entries. */
 		if (unlikely(details))
-			continue;
+			goto check;
 
 		if (!non_swap_entry(entry))
 			rss[MM_SWAPENTS]--;
@@ -1107,6 +1157,11 @@ again:
 		if (unlikely(!free_swap_and_cache(entry)))
 			print_bad_pte(vma, addr, ptent, NULL);
 		pte_clear_not_present_full(mm, addr, pte, tlb->fullmm);
+check:
+		if (remove_upper == 1)
+			goto upper;
+		if (upper_pgt == 1)
+			pte = pte-512;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 
 	add_mm_rss_vec(mm, rss);
@@ -1278,7 +1333,7 @@ static void unmap_single_vma(struct mmu_gather *tlb,
 				__unmap_hugepage_range_final(tlb, vma, start, end, NULL);
 				i_mmap_unlock_write(vma->vm_file->f_mapping);
 			}
-		} else
+		} else 
 			unmap_page_range(tlb, vma, start, end, details);
 	}
 }
@@ -2271,6 +2326,7 @@ static inline void wp_page_reuse(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	struct page *page = vmf->page;
 	pte_t entry;
+
 	/*
 	 * Clear the pages cpupid information as the existing
 	 * information potentially belongs to a now completely
@@ -2313,21 +2369,93 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	int page_copied = 0;
 	struct mem_cgroup *memcg;
 	struct mmu_notifier_range range;
+	int reused = 0;
+	int rewind_fork = 0;
+	int become_null = 0;
+
+	/* REWIND */
+	if (mm->owner->rewindable == 1 || current->exit_print == 1)
+                count_vm_event(REWIND_PF_WP_COPY);
 
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
 	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
-		new_page = alloc_zeroed_user_highpage_movable(vma,
-							      vmf->address);
+		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
+			if (pte_write(*((vmf->pte)+512)) && (pte_flags(*((vmf->pte)+512)) & _PAGE_SOFTW2)) {
+				count_vm_event(REWIND_PF_WP_COPY_REUSE);
+				current->rewind_reused_page++;
+				new_page = pte_page(*((vmf->pte)+512));
+				// zeroing new_page (does not zeroed)
+				clear_page(page_address(new_page));
+				reused = 1;
+			}
+			else {
+				new_page = alloc_zeroed_user_highpage_movable(vma,
+                                                                      vmf->address);
+			}
+		}
+		else
+			new_page = alloc_zeroed_user_highpage_movable(vma,
+								      vmf->address);
+
 		if (!new_page)
 			goto oom;
+
+		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
+			set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+512, *vmf->pte);
+			if (old_page) {
+				put_page(old_page);
+				old_page = NULL;
+			}
+		}
+
 	} else {
-		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
-				vmf->address);
+		// Only else statement was exist
+		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
+			pte_t clone_pte = *((vmf->pte)+512);
+			if (pte_flags(*vmf->pte) & _PAGE_SOFTW2) {
+				// Forked process's writable page was changed to read-only page
+				// Need to return page and get new pages
+				new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
+                                        vmf->address);
+				if (pte_write(*((vmf->pte) + 512))) {
+					// Does not have original read-only pte
+					rewind_fork = 1;
+				}
+			}
+			else if (pte_write(*((vmf->pte) + 512))) {
+				count_vm_event(REWIND_PF_WP_COPY_REUSE);
+				current->rewind_reused_page++;
+				new_page = pte_page(clone_pte);
+				reused = 1;
+				become_null = 1;
+			}
+			else {
+				new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
+                                        vmf->address);
+				become_null = 1;
+			}
+		}
+		else {
+			new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
+					vmf->address);
+		}
+		
+
 		if (!new_page)
 			goto oom;
 		cow_user_page(new_page, old_page, vmf->address, vma);
+
+		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
+                        if (become_null == 1) {
+                                set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+512, *vmf->pte);
+                                if (old_page) {
+                                        put_page(old_page);
+                                        old_page = NULL;
+                                }
+                        }
+		}
 	}
 
 	if (mem_cgroup_try_charge_delay(new_page, mm, GFP_KERNEL, &memcg, false))
@@ -2344,6 +2472,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	 * Re-check the pte - we dropped the lock
 	 */
 	vmf->pte = pte_offset_map_lock(mm, vmf->pmd, vmf->address, &vmf->ptl);
+	/* REWIND: about reused case */
 	if (likely(pte_same(*vmf->pte, vmf->orig_pte))) {
 		if (old_page) {
 			if (!PageAnon(old_page)) {
@@ -2352,11 +2481,16 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 				inc_mm_counter_fast(mm, MM_ANONPAGES);
 			}
 		} else {
-			inc_mm_counter_fast(mm, MM_ANONPAGES);
+			if (reused == 0)
+				inc_mm_counter_fast(mm, MM_ANONPAGES);
 		}
 		flush_cache_page(vma, vmf->address, pte_pfn(vmf->orig_pte));
 		entry = mk_pte(new_page, vma->vm_page_prot);
 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+
+		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0))
+			entry = pte_set_flags(entry, _PAGE_SOFTW2);
+
 		/*
 		 * Clear the pte entry and flush it first, before updating the
 		 * pte with the new entry. This will avoid a race condition
@@ -2364,15 +2498,19 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		 * thread doing COW.
 		 */
 		ptep_clear_flush_notify(vma, vmf->address, vmf->pte);
-		page_add_new_anon_rmap(new_page, vma, vmf->address, false);
-		mem_cgroup_commit_charge(new_page, memcg, false, false);
-		lru_cache_add_active_or_unevictable(new_page, vma);
+		if (reused == 0) {
+			page_add_new_anon_rmap(new_page, vma, vmf->address, false);
+			mem_cgroup_commit_charge(new_page, memcg, false, false);
+			lru_cache_add_active_or_unevictable(new_page, vma);
+		}
 		/*
 		 * We call the notify macro here because, when using secondary
 		 * mmu page tables (such as kvm shadow page tables), we want the
 		 * new page to be mapped directly into the secondary page table.
 		 */
 		set_pte_at_notify(mm, vmf->address, vmf->pte, entry);
+		if (rewind_fork == 1)
+			set_pte_at(mm, vmf->address, (vmf->pte)+512, entry);
 		update_mmu_cache(vma, vmf->address, vmf->pte);
 		if (old_page) {
 			/*
@@ -2410,6 +2548,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	if (new_page)
 		put_page(new_page);
 
+
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
 	/*
 	 * No need to double call mmu_notifier->invalidate_range() callback as
@@ -2429,6 +2568,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		}
 		put_page(old_page);
 	}
+
 	return page_copied ? VM_FAULT_WRITE : 0;
 oom_free_new:
 	put_page(new_page);
@@ -2498,6 +2638,9 @@ static vm_fault_t wp_page_shared(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 
+	/* REWIND */
+	//pf_add_rewind_list(vmf, ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)), REWIND_WP_SHARED);
+
 	get_page(vmf->page);
 
 	if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
@@ -2566,6 +2709,10 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 		return wp_page_copy(vmf);
 	}
 
+	// No flag change for rewind memory region (have to rollback to previous region)
+	if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0))
+		goto copy;
+
 	/*
 	 * Take out anonymous pages first, anonymous shared vmas are
 	 * not dirty accountable.
@@ -2595,6 +2742,8 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 			unlock_page(vmf->page);
 			if (!reused)
 				goto copy;
+			if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+		                count_vm_event(REWIND_PF_WP_REUSE);
 			wp_page_reuse(vmf);
 			return VM_FAULT_WRITE;
 		}
@@ -2610,6 +2759,8 @@ static vm_fault_t do_wp_page(struct vm_fault *vmf)
 				page_move_anon_rmap(vmf->page, vma);
 			}
 			unlock_page(vmf->page);
+			if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+		                count_vm_event(REWIND_PF_WP_REUSE);
 			wp_page_reuse(vmf);
 			return VM_FAULT_WRITE;
 		}
@@ -2979,8 +3130,15 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	/* Use the zero-page for reads */
 	if (!(vmf->flags & FAULT_FLAG_WRITE) &&
 			!mm_forbids_zeropage(vma->vm_mm)) {
+
+		/* REWIND */
+		if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+			count_vm_event(REWIND_PF_ANON_READ);
+
+
 		entry = pte_mkspecial(pfn_pte(my_zero_pfn(vmf->address),
 						vma->vm_page_prot));
+
 		vmf->pte = pte_offset_map_lock(vma->vm_mm, vmf->pmd,
 				vmf->address, &vmf->ptl);
 		if (!pte_none(*vmf->pte))
@@ -2996,6 +3154,11 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 		goto setpte;
 	}
 
+	/* REWIND */
+	if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+		count_vm_event(REWIND_PF_ANON_WRITE);
+
+
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
@@ -3006,6 +3169,8 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	if (mem_cgroup_try_charge_delay(page, vma->vm_mm, GFP_KERNEL, &memcg,
 					false))
 		goto oom_free_page;
+
+	vma->anon_size += 4;
 
 	/*
 	 * The memory barrier inside __SetPageUptodate makes sure that
@@ -3039,8 +3204,17 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	page_add_new_anon_rmap(page, vma, vmf->address, false);
 	mem_cgroup_commit_charge(page, memcg, false, false);
 	lru_cache_add_active_or_unevictable(page, vma);
+
 setpte:
-	set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
+	// REWIND: clear all data of current process's anonymous page
+	if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
+		entry = pte_set_flags(entry, _PAGE_SOFTW2);
+		set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
+		//set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+PAGE_SIZE, entry);
+		memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+	}
+	else
+		set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
 
 	/* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, vmf->address, vmf->pte);
@@ -3298,10 +3472,13 @@ vm_fault_t alloc_set_pte(struct vm_fault *vmf, struct mem_cgroup *memcg,
 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
 	/* copy-on-write page */
 	if (write && !(vma->vm_flags & VM_SHARED)) {
-		inc_mm_counter_fast(vma->vm_mm, MM_ANONPAGES);
-		page_add_new_anon_rmap(page, vma, vmf->address, false);
-		mem_cgroup_commit_charge(page, memcg, false, false);
-		lru_cache_add_active_or_unevictable(page, vma);
+		/* REWIND */
+                if (vmf->reuse_pg == 0) {
+                        inc_mm_counter_fast(vma->vm_mm, MM_ANONPAGES);
+                        page_add_new_anon_rmap(page, vma, vmf->address, false);
+                        mem_cgroup_commit_charge(page, memcg, false, false);
+                        lru_cache_add_active_or_unevictable(page, vma);
+                }
 	} else {
 		inc_mm_counter_fast(vma->vm_mm, mm_counter_file(page));
 		page_add_file_rmap(page, false);
@@ -3461,8 +3638,9 @@ static vm_fault_t do_fault_around(struct vm_fault *vmf)
 
 	/* check if the page fault is solved */
 	vmf->pte -= (vmf->address >> PAGE_SHIFT) - (address >> PAGE_SHIFT);
-	if (!pte_none(*vmf->pte))
+	if (!pte_none(*vmf->pte)) 
 		ret = VM_FAULT_NOPAGE;
+	
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
 out:
 	vmf->address = address;
@@ -3475,6 +3653,10 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	vm_fault_t ret = 0;
 
+	/* REWIND */
+	if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+                count_vm_event(REWIND_PF_FILE_READ);	
+
 	/*
 	 * Let's call ->map_pages() first and use ->fault() as fallback
 	 * if page by the offset is not ready to be mapped (cold cache or
@@ -3486,12 +3668,21 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 			return ret;
 	}
 
+
 	ret = __do_fault(vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
 		return ret;
 
 	ret |= finish_fault(vmf);
 	unlock_page(vmf->page);
+
+	// Read fault simply copy the pte
+	if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
+		if (!(pte_flags(*((vmf->pte)+512)) & _PAGE_SOFTW2)) {
+			memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+		}
+ 	}
+	
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
 		put_page(vmf->page);
 	return ret;
@@ -3502,10 +3693,31 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	vm_fault_t ret;
 
+	/* REWIND */
+	pte_t *clone_pte;
+	if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+                count_vm_event(REWIND_PF_FILE_WRITE);
+
 	if (unlikely(anon_vma_prepare(vma)))
 		return VM_FAULT_OOM;
 
-	vmf->cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vmf->address);
+	if (vma->vm_mm->owner->rewind_cnt > 1) { // After first rewind
+		clone_pte = pte_offset_map(vmf->pmd, vmf->address);
+		clone_pte = clone_pte + 512;
+		if (pte_none(*clone_pte)) {
+			vmf->cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vmf->address);
+			vmf->reuse_pg = 0;
+		}
+		else {
+			vmf->cow_page = pte_page(*clone_pte);
+			vmf->reuse_pg = 1;
+			current->rewind_reused_page++;
+		}
+	} else {
+		vmf->cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vmf->address);
+		vmf->reuse_pg = 0;
+	}
+	
 	if (!vmf->cow_page)
 		return VM_FAULT_OOM;
 
@@ -3514,7 +3726,7 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 		put_page(vmf->cow_page);
 		return VM_FAULT_OOM;
 	}
-
+	
 	ret = __do_fault(vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
 		goto uncharge_out;
@@ -3527,6 +3739,15 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 	ret |= finish_fault(vmf);
 	unlock_page(vmf->page);
 	put_page(vmf->page);
+
+	// do_fault's CoW fault => no orig pte (no orig page), but need to copy on write, means same as anon write fault
+	if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
+		pte_t entry = *vmf->pte;
+		entry = pte_set_flags(entry, _PAGE_SOFTW2);
+                set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
+		memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+	}
+		
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
 		goto uncharge_out;
 	return ret;
@@ -3541,6 +3762,10 @@ static vm_fault_t do_shared_fault(struct vm_fault *vmf)
 	struct vm_area_struct *vma = vmf->vma;
 	vm_fault_t ret, tmp;
 
+	/* REWIND */
+	if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+                count_vm_event(REWIND_PF_FILE_SHARE);
+	
 	ret = __do_fault(vmf);
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
 		return ret;
@@ -3566,6 +3791,13 @@ static vm_fault_t do_shared_fault(struct vm_fault *vmf)
 		put_page(vmf->page);
 		return ret;
 	}
+
+	// Maybe consider more about sharing position....
+        if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
+                //printk(KERN_INFO "REWIND(share): shared fault copy\n");
+		//set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+PAGE_SIZE, *vmf->pte);
+                memcpy((vmf->pte)+512, vmf->pte, 8);
+        }
 
 	fault_dirty_shared_page(vma, vmf->page);
 	return ret;
@@ -3805,6 +4037,7 @@ static vm_fault_t wp_huge_pud(struct vm_fault *vmf, pud_t orig_pud)
 static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 {
 	pte_t entry;
+	current->rewind_pf_cnt++;
 
 	if (unlikely(pmd_none(*vmf->pmd))) {
 		/*
@@ -3905,6 +4138,13 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	pgd_t *pgd;
 	p4d_t *p4d;
 	vm_fault_t ret;
+	vm_fault_t tmp;
+
+	/* REWIND */	
+	//rewind_pf_cnt++;
+	//if ((rewind_kth->state & TASK_PARKED) != 0)
+	//	kthread_unpark(rewind_kth);
+	//pf_add_rewind_list(&vmf, mm->owner->rewindable);
 
 	pgd = pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
@@ -3970,7 +4210,9 @@ static vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		}
 	}
 
-	return handle_pte_fault(&vmf);
+	tmp = handle_pte_fault(&vmf);
+	//pf_add_rewind_list(&vmf, ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)), tmp+10000);
+	return tmp;
 }
 
 /*
@@ -3988,6 +4230,8 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	count_vm_event(PGFAULT);
 	count_memcg_event_mm(vma->vm_mm, PGFAULT);
+	if (vma->vm_mm->owner->rewindable == 1 || current->exit_print == 1)
+		count_vm_event(REWIND_PGFAULT);
 
 	/* do counter updates before entering really critical section. */
 	check_sync_rss_stat(current);
@@ -4654,3 +4898,258 @@ void ptlock_free(struct page *page)
 	kmem_cache_free(page_ptl_cachep, page->ptl);
 }
 #endif
+
+/* REWIND */
+unsigned long long tmp_pgd;
+unsigned long long tmp_p4d;
+unsigned long long tmp_pud;
+unsigned long long tmp_pmd;
+unsigned long long tmp_pte;
+
+unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma, pmd_t *pmd, unsigned long addr, unsigned long end, unsigned long rewind_flag) {
+	struct mm_struct *mm = vma->vm_mm;
+	pte_t *pte;
+	spinlock_t *ptl;
+	struct page *pg;
+	unsigned long long pte_time, clear_time, flush_time, tmp;
+	int erase_page = 0;
+	int copy_page = 0;
+	int clearing = 0;
+	pte_time = 0;
+	clear_time = 0;
+	flush_time = 0;
+	
+	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+	arch_enter_lazy_mmu_mode();
+	do {
+		/* PGT Copy */
+		if (!pte ||  pte_none(*pte)) {
+                        continue;
+                }
+		erase_page = 0;
+		copy_page = 0;
+		clearing = 0;
+
+		//pg = pte_page(*pte);
+		//__lock_page(pg);		
+                if (rewind_flag == 1) {
+			tmp = rdtsc();
+			pte_t *rpte = pte+512;
+			if (pte_write(*rpte)) {
+				if (!(pte_flags(*rpte) & _PAGE_SOFTW2))
+					printk(KERN_INFO "REWIND(pte): Not rewindable rewind pte(w)... 0x%lx / 0x%lx \n",pte_val(*pte),pte_val(*rpte));
+				if (pte_pfn(*rpte) != pte_pfn(*pte)) {
+					if (pte_write(*pte)) {
+						// w-w' Rewindable write page is erased...
+						printk(KERN_INFO "REWIND(pte): writable rewind page erased... 0x%lx / 0x%lx \n",pte_val(*pte),pte_val(*rpte));
+					}
+					// w-r Nothing to do
+				}
+				else {
+					if (!pte_write(*pte)) {
+						// w0-r0 (cow page) erase and 0-0
+						erase_page = 1;
+                                		pg = pte_page(*pte);
+	                        	        pte_clear(mm, addr, pte);
+			                        pte_clear(mm, addr, rpte);
+					}
+					else {
+						// w-w => w-w/w-0
+						clearing = 1;
+						if (!vma_is_anonymous(vma)) {
+							current->rewind_page_reuse++;
+							pte_clear(mm, addr, pte);
+						}
+						else // clear flags(?)
+							set_pte_at(mm, addr, pte, *rpte);
+					}
+				}
+			}
+			else {
+				if (pte_flags(*rpte) & _PAGE_SOFTW2) {
+                                        //printk(KERN_INFO "REWIND(pte): Rewindable rewind pte(r)... 0x%lx / 0x%lx\n", pte_val(*pte),pte_val(*rpte));
+					// May be zero page ...?
+				}
+				if (pte_pfn(*rpte) != pte_pfn(*pte)) {
+					if (!pte_write(*pte)) {
+						// r-r' erase and rollback
+						erase_page = 1;
+                		                pg = pte_page(*pte);
+		                                set_pte_at(mm, addr, pte, *rpte);		
+					}
+					else {
+						// r-w0 switch and clearing -> copy data into writable page (previous method)
+						// simply copy original data into cow page
+						//clearing = 1;
+						//pte_t tmp = *rpte;
+						//current->rewind_page_reuse++;
+                	                        //set_pte_at(mm, addr, rpte, *pte);
+		                                //set_pte_at(mm, addr, pte, tmp);
+						copy_page = 1;
+					}
+				}
+				else {
+					if (pte_write(*pte)) {
+						// r-w but same pfn...
+						printk(KERN_INFO "REWIND(pte): Something wrong at wp 0x%lx / 0x%lx\n", pte_val(*pte),pte_val(*rpte));
+					}
+					else {
+						// r-r update status (flags)
+						set_pte_at(mm, addr, rpte, *pte);
+					}
+				}
+			}			
+			pte_time += rdtsc()-tmp;
+
+			tmp = rdtsc();
+			if (clearing == 1) {
+				struct page *clone_pg;
+				clone_pg = pte_page(*rpte);
+				__lock_page(clone_pg);
+				clear_page(page_address(clone_pg));
+				unlock_page(clone_pg);
+				current->rewind_page_cnt++;
+                        }
+			else if (erase_page == 1) {
+				dec_mm_counter_fast(mm, mm_counter(pg));
+				page_remove_rmap(pg, false);	
+				put_page(pg);
+				current->rewind_page_erase_cnt++;
+			}
+			else if (copy_page == 1) {
+				copy_user_highpage(pte_page(*pte), pte_page(*rpte), addr, vma);							     current->rewind_page_cow_cnt++;
+			}
+			clear_time += rdtsc()-tmp;
+		}
+                else {
+			set_pte_at(mm, addr, pte, pte_wrprotect(*pte));
+                        memcpy(pte+512, pte, sizeof(pte_t));
+                }
+		current->rewind_pte_cnt++;
+		//unlock_page(pg);
+
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+	arch_leave_lazy_mmu_mode();
+	pte_unmap_unlock(pte, ptl);	
+
+	flush_time = rdtsc();	
+	tlb_flush_mmu(tlb);
+	flush_time = rdtsc() - flush_time;
+	
+	current->rewind_pte += pte_time;
+	current->rewind_clear += clear_time;
+	current->rewind_flush += flush_time;
+
+	return addr;
+}
+
+unsigned long rewind_pmd_walk(struct mmu_gather *tlb, struct vm_area_struct *vma, pud_t *pud, unsigned long addr, unsigned long end, unsigned long rewind_flag) {
+	pmd_t *pmd;
+	unsigned long next;
+
+	pmd = pmd_offset(pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+		if (is_swap_pmd(*pmd) || pmd_trans_huge(*pmd) || pmd_devmap(*pmd)) {
+                        if (next - addr != HPAGE_PMD_SIZE)
+                                __split_huge_pmd(vma, pmd, addr, false, NULL);
+                        else if (zap_huge_pmd(tlb, vma, pmd, addr))
+                                continue;
+                }
+		if (pmd_none_or_trans_huge_or_clear_bad(pmd))
+			continue;
+		next = rewind_pte_walk(tlb, vma, pmd, addr, next, rewind_flag);
+	} while (pmd++, addr = next, addr != end);
+	
+	return addr;
+}
+
+unsigned long rewind_pud_walk(struct mmu_gather *tlb, struct vm_area_struct *vma, p4d_t *p4d, unsigned long addr, unsigned long end, unsigned long rewind_flag) {
+	pud_t *pud;
+	unsigned long next;
+
+	pud = pud_offset(p4d, addr);
+	do {
+		next = pud_addr_end(addr, end);
+		if (pud_trans_huge(*pud) || pud_devmap(*pud)) {
+                        if (next - addr != HPAGE_PUD_SIZE) {
+                                VM_BUG_ON_VMA(!rwsem_is_locked(&tlb->mm->mmap_sem), vma);
+                                split_huge_pud(vma, pud, addr);
+                        } else if (zap_huge_pud(tlb, vma, pud, addr)) {
+				continue; 
+			}
+                }
+		if (pud_none_or_clear_bad(pud))
+			continue;
+		next = rewind_pmd_walk(tlb, vma, pud, addr, next, rewind_flag);
+	} while (pud++, addr = next, addr != end);
+	
+	return addr;
+}
+
+unsigned long rewind_p4d_walk(struct mmu_gather *tlb, struct vm_area_struct *vma, pgd_t *pgd, unsigned long addr, unsigned long end, unsigned long rewind_flag) {
+	p4d_t *p4d;
+	unsigned long next;
+
+	p4d = p4d_offset(pgd, addr);
+	do {
+		next = p4d_addr_end(addr, end);
+		if (p4d_none_or_clear_bad(p4d))
+			continue;
+		next = rewind_pud_walk(tlb, vma, p4d, addr, next, rewind_flag);
+	} while (p4d++, addr = next, addr != end);
+	
+	return addr;
+}
+
+void rewind_pgd_walk(struct mmu_gather *tlb, struct vm_area_struct *vma, unsigned long addr, unsigned long end, unsigned long rewind_flag) {
+	struct mm_struct *mm = vma->vm_mm;
+	pgd_t *pgd;
+	unsigned long next;
+
+	tlb_start_vma(tlb, vma);
+        pgd = pgd_offset(mm, addr);
+        do {
+		next = pgd_addr_end(addr, end);
+                if (pgd_none_or_clear_bad(pgd))
+                        continue;
+                next = rewind_p4d_walk(tlb, vma, pgd, addr, next, rewind_flag);
+        } while (pgd++, addr = next, addr != end);
+	tlb_end_vma(tlb, vma);
+}
+
+void copy_pgt(struct mm_struct *mm, unsigned int rewind_flag) {
+	struct vm_area_struct *vma = mm->mmap;
+	struct mmu_gather tlb;
+	struct mmu_notifier_range range;
+	
+	tlb_gather_mmu(&tlb, mm, 0, -1);	
+	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0 , vma, vma->vm_mm, 0, -1);
+	mmu_notifier_invalidate_range_start(&range);
+
+	for (; vma; vma = vma->vm_next) {
+		current->rewind_total_vma++;
+		if (rewind_flag == 1 && vma->rewind > 0) {
+                        if (vma->rewindable == 1 && current->rewind_cnt < vma->rewind+3) {
+				vma->rewind_used = 0;
+				current->rewind_unused_vma++;
+				current->rewind_reusable_size += vma->anon_size;
+				continue;
+                        } else {
+				unsigned long long tmp = rdtsc();
+                                struct vm_area_struct *prev = vma->vm_prev;					
+                                vma->rewindable = 0;
+				vm_munmap(vma->vm_start, vma->vm_end - vma->vm_start);
+                                vma = prev;
+				current->rewind_unmap += rdtsc()-tmp;
+                                continue;
+                        }
+                }
+		current->rewind_vma++;
+		rewind_pgd_walk(&tlb, vma, vma->vm_start, vma->vm_end, rewind_flag);
+	}
+
+	mmu_notifier_invalidate_range_end(&range);
+	tlb_finish_mmu(&tlb, 0, -1);
+}
+
