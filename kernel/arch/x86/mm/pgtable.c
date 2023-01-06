@@ -8,6 +8,9 @@
 #include <asm/fixmap.h>
 #include <asm/mtrr.h>
 
+/* REWIND */
+#include <linux/mm_rewinder.h>
+
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
 EXPORT_SYMBOL(physical_mask);
@@ -47,7 +50,13 @@ void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
 	pgtable_pte_page_dtor(pte);
 	paravirt_release_pte(page_to_pfn(pte));
-	paravirt_tlb_remove_table(tlb, pte);
+	if (current->rewind_cnt > 0) // BUG: change to current->mm->owner (thread issue)
+		if (test_bit(PG_rewind, &(pte->flags))) {
+			__free_pages(pte, 1);	
+		} else
+			paravirt_tlb_remove_table(tlb, pte);
+	else
+		paravirt_tlb_remove_table(tlb, pte);
 }
 
 #if CONFIG_PGTABLE_LEVELS > 2
@@ -424,7 +433,7 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 
 	if (pgd == NULL)
 		goto out;
-
+	
 	mm->pgd = pgd;
 
 	if (preallocate_pmds(mm, pmds, PREALLOCATED_PMDS) != 0)

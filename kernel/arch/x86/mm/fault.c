@@ -835,6 +835,12 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 		unsigned long address, struct task_struct *tsk)
 {
 	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG;
+	struct task_struct *anc = tsk->real_parent;
+	pid_t ppid;
+	if (anc)
+		ppid = anc->pid;
+	else
+		ppid = 0;
 
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;
@@ -842,8 +848,8 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 	if (!printk_ratelimit())
 		return;
 
-	printk("%s%s[%d]: segfault at %lx ip %px sp %px error %lx",
-		loglvl, tsk->comm, task_pid_nr(tsk), address,
+	printk("%s%s[%d(%d, %d)]: segfault at %lx ip %px sp %px error %lx",
+		loglvl, tsk->comm, task_pid_nr(tsk), task_tgid_nr(tsk), ppid, address,
 		(void *)regs->ip, (void *)regs->sp, error_code);
 
 	print_vma_addr(KERN_CONT " in ", regs->ip);
@@ -1438,7 +1444,10 @@ good_area:
 	 * userland). The return to userland is identified whenever
 	 * FAULT_FLAG_USER|FAULT_FLAG_KILLABLE are both set in flags.
 	 */
+	unsigned long long tmp  = rdtsc();
 	fault = handle_mm_fault(vma, address, flags);
+	if (mm->owner)
+		mm->owner->rewind_time += rdtsc() - tmp;
 	major |= fault & VM_FAULT_MAJOR;
 
 	/*
@@ -1499,7 +1508,19 @@ __do_page_fault(struct pt_regs *regs, unsigned long hw_error_code,
 	if (unlikely(kmmio_fault(regs, address)))
 		return;
 
-	/* Was the fault on kernel-controlled part of the address space? */
+	//if (current->mm) {
+		//if (current->mm->rewindable == 1) {
+		//printk(KERN_INFO "REWIND(do_pf): my pid/tgid=%d/%d\n", current->pid, current->tgid);
+	/*	
+		if (atomic_read(&current->mm->rewinding) == 1) {
+			while (atomic_read(&current->mm->rewinding) == 1);
+			return;	
+		}
+	*/	
+		//}
+	//}
+
+	/* Was the fault on kernel-controlled part of the address space? */	
 	if (unlikely(fault_in_kernel_space(address)))
 		do_kern_addr_fault(regs, hw_error_code, address);
 	else

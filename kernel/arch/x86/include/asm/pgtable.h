@@ -1079,7 +1079,16 @@ static inline pud_t native_local_pudp_get_and_clear(pud_t *pudp)
 static inline void native_set_pte_at(struct mm_struct *mm, unsigned long addr,
 				     pte_t *ptep , pte_t pte)
 {
+//	struct task_struct *own;
+	
 	native_set_pte(ptep, pte);
+/*
+	own = mm->owner;
+	if (own && (own->rewind_cp == 1)) {
+		//printk(KERN_INFO "REWIND(pte_set): clone pte PID=%d\n", own->pid);
+                native_set_pte(ptep+PAGE_SIZE, pte);
+	}
+*/
 }
 
 static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
