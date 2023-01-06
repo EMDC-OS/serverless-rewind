@@ -71,6 +71,7 @@ object Messages {
     s"Too many requests in the last minute (count: $count, allowed: $allowed)."
 
   /** Standard message for too many concurrent activation requests within a time window. */
+  val tooManyConcurrentRequests = s"Too many concurrent requests in flight."
   def tooManyConcurrentRequests(count: Int, allowed: Int) =
     s"Too many concurrent requests in flight (count: $count, allowed: $allowed)."
 
@@ -96,6 +97,12 @@ object Messages {
   /** Standard error for malformed activation id. */
   val activationIdIllegal = "The activation id is not valid."
   def activationIdLengthError(error: SizeError) = {
+    s"${error.field} length is ${error.is.toBytes} but must be ${error.allowed.toBytes}."
+  }
+
+  /** Standard error for malformed creation id. */
+  val creationIdIllegal = "The creation id is not valid."
+  def creationIdLengthError(error: SizeError) = {
     s"${error.field} length is ${error.is.toBytes} but must be ${error.allowed.toBytes}."
   }
 
@@ -197,7 +204,7 @@ object Messages {
   }
 
   def invalidRunResponse(actualResponse: String) = {
-    "The action did not produce a valid JSON response" + {
+    "The action did not produce a valid JSON or JSON Array response" + {
       Option(actualResponse) filter { _.nonEmpty } map { s =>
         s": $s"
       } getOrElse "."
@@ -219,6 +226,7 @@ object Messages {
   }
 
   val namespacesBlacklisted = "The action was not invoked due to a blacklisted namespace."
+  val namespaceLimitUnderZero = "The namespace limit is less than or equal to 0."
 
   val actionRemovedWhileInvoking = "Action could not be found or may have been deleted."
   val actionMismatchWhileInvoking = "Action version is not compatible and cannot be invoked."
@@ -226,6 +234,8 @@ object Messages {
 
   /** Indicates that the image could not be pulled. */
   def imagePullError(image: String) = s"Failed to pull container image '$image'."
+
+  def commandNotFoundError = "executable file not found"
 
   /** Indicates that the container for the action could not be started. */
   val resourceProvisionError = "Failed to provision resources to run the action."

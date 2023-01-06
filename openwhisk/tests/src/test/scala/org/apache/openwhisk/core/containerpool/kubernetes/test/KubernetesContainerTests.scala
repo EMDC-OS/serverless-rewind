@@ -21,7 +21,6 @@ import java.io.IOException
 import java.time.{Instant, ZoneId}
 
 import akka.NotUsed
-import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Flow, Sink, Source}
 import akka.util.ByteString
 import common.TimingHelpers
@@ -75,8 +74,6 @@ class KubernetesContainerTests
   override def beforeEach() = {
     stream.reset()
   }
-
-  implicit val materializer: ActorMaterializer = ActorMaterializer()
 
   def instantDT(instant: Instant): Instant = Instant.from(instant.atZone(ZoneId.of("GMT+0")))
 
@@ -278,6 +275,22 @@ class KubernetesContainerTests
     val end = LogMarker.parse(logLines.last)
     end.token shouldBe INVOKER_ACTIVATION_RUN.asFinish
     end.deltaToMarkerStart shouldBe Some(interval.duration.toMillis)
+  }
+
+  it should "throw ContainerHealthError if runtime container returns 503 response" in {
+    implicit val kubernetes = stub[KubernetesApi]
+
+    val interval = intervalOf(1.millisecond)
+    val result = JsObject.empty
+    val container = kubernetesContainer() {
+      Future.successful(RunResult(interval, Right(ContainerResponse(503, result.compactPrint, None))))
+    }
+
+    val initResult = container.initialize(JsObject.empty, 1.second, 1)
+    an[ContainerHealthError] should be thrownBy await(initResult)
+
+    val runResult = container.run(JsObject.empty, JsObject.empty, 1.second, 1)
+    an[ContainerHealthError] should be thrownBy await(runResult)
   }
 
   it should "properly deal with a timeout during run" in {

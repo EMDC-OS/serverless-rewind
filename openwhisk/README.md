@@ -19,7 +19,7 @@
 
 # OpenWhisk
 
-[![Build Status](https://travis-ci.org/apache/openwhisk.svg?branch=master)](https://travis-ci.org/apache/openwhisk)
+[![Build Status](https://travis-ci.com/apache/openwhisk.svg?branch=master)](https://travis-ci.com/github/apache/openwhisk)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 [![Join Slack](https://img.shields.io/badge/join-slack-9B69A0.svg)](https://openwhisk-team.slack.com/)
 [![codecov](https://codecov.io/gh/apache/openwhisk/branch/master/graph/badge.svg)](https://codecov.io/gh/apache/openwhisk)
@@ -111,3 +111,9 @@ You can also join the OpenWhisk Team on Slack [https://openwhisk-team.slack.com]
 The OpenWhisk system is built from a [number of components](docs/dev/modules.md).  The picture below groups the components by their GitHub repos. Please open issues for a component against the appropriate repo (if in doubt just open against the main openwhisk repo).
 
 ![component/repo mapping](docs/images/components_to_repos.png)
+
+### What happens on an invocation?
+
+This diagram depicts the steps which take place within Openwhisk when an action is invoked by the user:
+
+![component/repo mapping](docs/images/Openwhisk-flow-diagram.png)

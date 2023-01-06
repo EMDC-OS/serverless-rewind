@@ -40,6 +40,18 @@ import org.apache.openwhisk.core.containerpool.logging.LogLine
 import org.apache.openwhisk.core.entity.ExecManifest.ImageName
 import org.apache.openwhisk.http.Messages
 
+object cpus {
+    var useCPU: Int = 2
+    def getCPU(): Int = {
+        useCPU = (useCPU + 2) % 48
+        if (useCPU == 0)
+                useCPU = 4
+        else if (useCPU == 24)
+                useCPU = 28
+        useCPU
+    }
+}
+
 object DockerContainer {
 
   private val byteStringSentinel = ByteString(Container.ACTIVATION_LOG_SENTINEL)
@@ -86,6 +98,9 @@ object DockerContainer {
     }
 
     // NOTE: --dns-option on modern versions of docker, but is --dns-opt on docker 1.12
+    val useCPU = cpus.getCPU()
+    val cpuset = Seq("--cpuset-cpus", useCPU.toString)
+
     val dnsOptString = if (docker.clientVersion.startsWith("1.12")) { "--dns-opt" } else { "--dns-option" }
     val args = Seq(
       "--cpu-shares",
@@ -96,6 +111,7 @@ object DockerContainer {
       s"${memory.toMB}m",
       "--network",
       network) ++
+      cpuset ++
       environmentArgs ++
       dnsServers.flatMap(d => Seq("--dns", d)) ++
       dnsSearch.flatMap(d => Seq("--dns-search", d)) ++
@@ -106,7 +122,8 @@ object DockerContainer {
     val registryConfigUrl = registryConfig.map(_.url).getOrElse("")
     val imageToUse = image.merge.resolveImageName(Some(registryConfigUrl))
 
-    val pulled = image match {
+    val pulled = Future.successful(true)
+    /* image match {
       case Left(userProvided) if userProvided.tag.map(_ == "latest").getOrElse(true) =>
         // Iff the image tag is "latest" explicitly (or implicitly because no tag is given at all), failing to pull will
         // fail the whole container bringup process, because it is expected to pick up the very latest "untagged"
@@ -123,15 +140,18 @@ object DockerContainer {
         // Iff we're not pulling at all (OpenWhisk provided image) we act as if the pull was successful.
         Future.successful(true)
     }
-
+    */
     for {
       pullSuccessful <- pulled
       id <- docker.run(imageToUse, args).recoverWith {
-        case BrokenDockerContainer(brokenId, _) =>
+        case BrokenDockerContainer(brokenId, _, exitStatus) if exitStatus.isEmpty || exitStatus.contains(125) =>
           // Remove the broken container - but don't wait or check for the result.
           // If the removal fails, there is nothing we could do to recover from the recovery.
           docker.rm(brokenId)
           Future.failed(WhiskContainerStartupError(Messages.resourceProvisionError))
+        case BrokenDockerContainer(brokenId, _, exitStatus) if exitStatus.contains(127) =>
+          docker.rm(brokenId)
+          Future.failed(BlackboxStartupError(s"${Messages.commandNotFoundError} in image ${imageToUse}"))
         case _ =>
           // Iff the pull was successful, we assume that the error is not due to an image pull error, otherwise
           // the docker run was a backup measure to try and start the container anyway. If it fails again, we assume

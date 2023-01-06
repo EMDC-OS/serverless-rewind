@@ -276,7 +276,7 @@ class ContainerProxyTests
     (transid: TransactionId, activation: WhiskActivation, isBlockingActivation: Boolean, context: UserContext) =>
       Future.successful(())
   }
-  val poolConfig = ContainerPoolConfig(2.MB, 0.5, false, 1.minute, None, 100)
+  val poolConfig = ContainerPoolConfig(2.MB, 0.5, false, 2.second, 1.minute, None, 100, 3, false, 1.second, 10)
   def healthchecksConfig(enabled: Boolean = false) = ContainerProxyHealthCheckConfig(enabled, 100.milliseconds, 2)
   val filterEnvVar = (k: String) => Character.isUpperCase(k.charAt(0))
 
@@ -1338,7 +1338,7 @@ class ContainerProxyTests
     timeout) {
     val container = new TestContainer {
       override def run(
-        parameters: JsObject,
+        parameters: JsValue,
         environment: JsObject,
         timeout: FiniteDuration,
         concurrent: Int,
@@ -1519,7 +1519,7 @@ class ContainerProxyTests
     timeout) {
     val container = new TestContainer {
       override def run(
-        parameters: JsObject,
+        parameters: JsValue,
         environment: JsObject,
         timeout: FiniteDuration,
         concurrent: Int,
@@ -1688,7 +1688,7 @@ class ContainerProxyTests
   it should "resend the job to the parent if /run fails connection after Paused -> Running" in within(timeout) {
     val container = new TestContainer {
       override def run(
-        parameters: JsObject,
+        parameters: JsValue,
         environment: JsObject,
         timeout: FiniteDuration,
         concurrent: Int,
@@ -1740,7 +1740,7 @@ class ContainerProxyTests
   it should "resend the job to the parent if /run fails connection after Ready -> Running" in within(timeout) {
     val container = new TestContainer {
       override def run(
-        parameters: JsObject,
+        parameters: JsValue,
         environment: JsObject,
         timeout: FiniteDuration,
         concurrent: Int,
@@ -2160,7 +2160,7 @@ class ContainerProxyTests
       initPromise.map(_.future).getOrElse(Future.successful(initInterval))
     }
     override def run(
-      parameters: JsObject,
+      parameters: JsValue,
       environment: JsObject,
       timeout: FiniteDuration,
       concurrent: Int,

@@ -58,6 +58,31 @@ func Main(obj map[string]interface{}) map[string]interface{} {
 }
 ```
 
+An action supports not only a JSON object but also a JSON array as a return value.
+
+It would be a simple example that uses an array as a return value:
+
+```go
+package main
+// Main is the function implementing the action
+func Main(event map[string]interface{}) []interface{} {
+        result := []interface{}{"a", "b"}
+        return result
+}
+```
+
+you can also create a sequence action with actions accepting an array param and returning an array result.
+
+You can easily figure out the parameters with the following example:
+
+```go
+package main
+// Main is the function implementing the action
+func Main(obj []interface{}) []interface{} {
+        return obj
+}
+```
+
 You can deploy it with just:
 
 ```
@@ -113,7 +138,7 @@ When you send the sources, you will have to zip the content of the `src` folder,
 cd src
 zip -r ../hello.zip *
 cd ..
-wsk action create hellozip hello.zip --kind go:1.11
+wsk action create hellozip hello.zip --kind go:1.15
 ```
 
 Check the example [golang-main-package](https://github.com/apache/openwhisk-runtime-go/tree/master/examples/golang-main-package) and the associated `Makefile`.
