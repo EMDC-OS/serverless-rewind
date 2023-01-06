@@ -18,7 +18,23 @@
  */
 static inline pte_t *__pte_alloc_one_kernel(struct mm_struct *mm)
 {
-	return (pte_t *)__get_free_page(GFP_PGTABLE_KERNEL);
+	//return (pte_t *)__get_free_page(GFP_PGTABLE_KERNEL);
+	struct task_struct *own = mm->owner;
+	
+	if (own && (own->rewindable == 1)) {
+		pte_t *ret;
+		struct page *pg;
+		ret = (pte_t *)__get_free_pages(GFP_PGTABLE_KERNEL, 1);
+		//printk(KERN_INFO "REWIND(pte_alloc): kernel allocate 8KB pgt\n");
+		if (ret) {
+			pg = pte_page(*ret);
+			set_bit(PG_rewind, &(pg->flags));
+			//printk(KERN_INFO "REWIND(pte_alloc): (flag=0x%lx)\n", pg->flags);
+		}
+		return ret;
+	}
+	else
+		return (pte_t *)__get_free_page(GFP_PGTABLE_KERNEL);
 }
 
 #ifndef __HAVE_ARCH_PTE_ALLOC_ONE_KERNEL
@@ -41,7 +57,14 @@ static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
  */
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 {
-	free_page((unsigned long)pte);
+	struct task_struct *own = mm->owner;
+	//free_page((unsigned long)pte);
+	if (own && (own->rewindable == 1)) {
+                free_pages((unsigned long)pte, 1);
+        }
+        else {
+                free_page((unsigned long)pte);
+        }
 }
 
 /**
@@ -60,7 +83,19 @@ static inline pgtable_t __pte_alloc_one(struct mm_struct *mm, gfp_t gfp)
 {
 	struct page *pte;
 
-	pte = alloc_page(gfp);
+//	pte = alloc_page(gfp);
+        /* REWIND */
+	struct task_struct *own = mm->owner;
+        if (own && (own->rewindable == 1)) {
+		//printk(KERN_INFO "REWIND(pte_alloc): user allocate 8KB pgt\n");
+                pte = alloc_pages(gfp, 1);
+		if (pte) 
+                        set_bit(PG_rewind, &(pte->flags));
+		//printk(KERN_INFO "REWIND(pte_alloc): (flag=0x%lx)\n", pte->flags);
+        }
+	else
+                pte = alloc_page(gfp);	
+
 	if (!pte)
 		return NULL;
 	if (!pgtable_pte_page_ctor(pte)) {
@@ -98,8 +133,17 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm)
  */
 static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 {
+	 struct task_struct *own = mm->owner;
+	
 	pgtable_pte_page_dtor(pte_page);
-	__free_page(pte_page);
+	//__free_page(pte_page);
+	if (own && (own->rewindable == 1)) {
+                __free_pages(pte_page, 1);
+        }
+        else {
+                __free_page(pte_page);
+        }
+
 }
 
 #endif /* CONFIG_MMU */

@@ -132,6 +132,7 @@ enum pageflags {
 	PG_idle,
 #endif
 	__NR_PAGEFLAGS,
+	PG_rewind,              /* REWIND: 8K pte table */
 
 	/* Filesystems */
 	PG_checked = PG_owner_priv_1,

@@ -1421,4 +1421,10 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
 
+asmlinkage long sys_checkpoint(unsigned long __user num);
+asmlinkage long sys_rewind(unsigned long __user num);
+asmlinkage long sys_rewindable(void);
+asmlinkage long sys_rewind_print(void);
+asmlinkage long sys_rewind_child(void);
+
 #endif

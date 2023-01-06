@@ -727,6 +727,40 @@ struct task_struct {
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
 
+	unsigned int			rewind_parent;
+	unsigned int			rewindable;
+	unsigned int 			rewind_cp;
+	unsigned int			rewind_cnt;
+
+	unsigned int			child_print;
+	unsigned int			exit_print;
+
+	unsigned long long		rewind_pte;
+	unsigned long long		rewind_clear;
+	unsigned long long 		rewind_unmap;
+	unsigned long long		rewind_flush;
+	unsigned long long		rewind_lock;
+	unsigned long long		rewind_time; // sum of pf time
+	unsigned long			rewind_page_cnt;
+	unsigned long			rewind_pte_cnt;
+	unsigned long			rewind_pf_cnt;
+
+	unsigned long			rewind_total_vma;
+	unsigned long			rewind_unused_vma;
+	unsigned long			rewind_vma;
+
+	unsigned long			rewind_vma_reuse;
+	unsigned long			rewind_vma_alloc;
+
+	unsigned long			rewind_page_reuse;
+	unsigned long			rewind_reused_page;
+
+	unsigned long			rewind_reusable_size;
+	unsigned long			rewind_reused_size;
+
+	unsigned long			rewind_page_erase_cnt;
+	unsigned long			rewind_page_cow_cnt;
+
 	/* Per-thread vma caching: */
 	struct vmacache			vmacache;
 

@@ -5,6 +5,8 @@
 #include <linux/err.h>
 #include <linux/sched.h>
 
+//extern int rewinder_init(void);
+
 __printf(4, 5)
 struct task_struct *kthread_create_on_node(int (*threadfn)(void *data),
 					   void *data,

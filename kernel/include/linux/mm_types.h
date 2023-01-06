@@ -315,6 +315,14 @@ struct vm_area_struct {
 	pgprot_t vm_page_prot;		/* Access permissions of this VMA. */
 	unsigned long vm_flags;		/* Flags, see mm.h. */
 
+	unsigned int rewind;		/* Rewind counter: 0 = vma before checkpoint, 1~ = vma after checkpoint */
+	unsigned int rewind_used;	/* Used vma check for rewindable vma: 0 = if used vma, 1 = unused now */
+	unsigned int rewindable;	/* Is vma is reusable? (My process's vma & anon vma with create after chk)  */
+	unsigned long rewind_flags;	/* Starting flags for rewind (for reusable check) */
+	pid_t pid;			/* Validate my mmap region for rewind */
+
+	unsigned long anon_size;
+
 	/*
 	 * For areas with an address space and backing store,
 	 * linkage into the address_space->i_mmap interval tree.
@@ -387,6 +395,11 @@ struct mm_struct {
 		unsigned long task_size;	/* size of task vm space */
 		unsigned long highest_vm_end;	/* highest vma end address */
 		pgd_t * pgd;
+
+		/* REWIND */
+		pgd_t * cloned_pgd;
+		unsigned int rewindable;
+		atomic_t rewinding;
 
 #ifdef CONFIG_MEMBARRIER
 		/**

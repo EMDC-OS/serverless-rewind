@@ -292,6 +292,8 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_NOHUGEPAGE	0x40000000	/* MADV_NOHUGEPAGE marked this vma */
 #define VM_MERGEABLE	0x80000000	/* KSM may merge identical pages */
 
+#define VM_NO_ADDR	0x8000000000000000 /* Set at mmap_region and unset after mmap_region */
+
 #ifdef CONFIG_ARCH_USES_HIGH_VMA_FLAGS
 #define VM_HIGH_ARCH_BIT_0	32	/* bit only usable on 64-bit architectures */
 #define VM_HIGH_ARCH_BIT_1	33	/* bit only usable on 64-bit architectures */
@@ -450,6 +452,10 @@ struct vm_fault {
 					 * page table to avoid allocation from
 					 * atomic context.
 					 */
+	unsigned int reuse_pg;		/* For rewind.
+					 * When do_cow_fault occur, reuse page
+					 * that allocated before rewind()
+					 */
 };
 
 /* page entry size for vm->huge_fault() */
@@ -533,6 +539,7 @@ static inline void vma_init(struct vm_area_struct *vma, struct mm_struct *mm)
 	memset(vma, 0, sizeof(*vma));
 	vma->vm_mm = mm;
 	vma->vm_ops = &dummy_vm_ops;
+
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
 }
 
