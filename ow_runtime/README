@@ -1,0 +1,3 @@
+1. git clone https://github.com/apache/openwhisk-runtime-docker 후 각 파일을 core/actionProxy에 넣기
+2. update_docker.sh은 받은 디렉토리에 넣기
+3. ./update_docker.sh [hub directory] (표현이 맞는지 모르겠음...)
