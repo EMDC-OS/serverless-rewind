@@ -1,0 +1,12 @@
+docker 실행을 위한 docker hub 이름
+bskoon/rewind-eval:fork
+bskoon/rewind-eval:fork-debug
+bskoon/rewind-eval:lib (Baseline, loop-based)
+bskoon/rewind-eval:lib-debug
+bskoon/rewind-eval:res (REWIND)
+bskoon/rewind-eval:res-debug
+bskoon/rewind-eval:odf-baseline (ODF가 적용안된 fork를 실행하기 위한 image)
+bskoon/rewind-eval:odf-baseline-debug
+
+만약 추가 수정이 필요하다면 actionProxy.sh, froc.sh을 수정 후 update_docker.sh을 참고하여 새로운 docker image를 생성하여 사용
+(위의 image는 절대 덮어 쓰지 말 것!!!!)
