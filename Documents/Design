@@ -1,46 +1,61 @@
-일반적인 실행과정 (OpenWhisk 기반)
-1. User: 함수실행 -> OpenWhisk로 전달
-2. OpenWhisk: Gateway를 통해 요청 받음 -> 내부 component를 거쳐 invoker로 전달 -> invoker에서 docker 실행 -> function container 실행 (docker run ...)
-(container process가 생성되는 과정에서 container 내에 함수 소스 코드가 들어감 - /actionProxy 혹은 /action으로 기억함)
-3. Docker: OpenWhisk에서 실행된 container 정보 획득 -> container 내에서는 함수 실행 정보를 받기 위한 proxy process 실행 (다음 bullet에서 baseline 경우 상세 설명)
--> Openwhisk에서 proxy process로 함수 실행을 위한 메시지 전송 (실험 기준으로 웹 서버 기반으로 주고 받음)
--> container 내에서는 받은 메시지에 적힌 parameter로 함수 실행 -> 결과를 다시 OpenWhisk로 전달
-4. OpenWhisk는 요청에 맞게 받아온 결과를 처리 (user에게 전달해주거나, DB를 업데이트 하거나 등등)
+[General Execution Process (OpenWhisk-based)]
+1. User: Executes a function and sends the request to OpenWhisk.
+2. OpenWhisk:
+ - Receives the request via the gateway.
+ - Passes the request through internal components to the invoker.
+ - The invoker executes a Docker container, starting the function container (docker run ...).
+ - During the container creation process, the function source code is placed inside the container (usually under /actionProxy or /action).
+3. Docker:
+ - Retrieves container information from OpenWhisk.
+ - Executes a proxy process within the container to receive function execution details (described in more detail in the baseline case below).
+ - OpenWhisk sends messages to the proxy process for function execution (in the experiment, communication was based on a web server). The container executes the function with parameters from the received message and sends the result back to OpenWhisk.
+4. OpenWhisk: Processes the received result according to the request (e.g., delivering it to the user, updating a database, etc.).
 
-Baseline, REWIND에서의 container process 실행
-1. Proxy process 실행 과정에서 함수를 실행할 process가 추가로 생성됨 (즉, proxy와 function process가 function의 core logic이 실행되기 전에 동시에 존재함)
-2. 생성 후 함수 실행 과정에서는 내부의 loop 문을 돌면서 proxy에서 function으로 메시지가 넘어왔을 때 실행해야할 함수의 core logic을 실행하는 방식
-(pseudo code는 논문의 Fig 4 작성되어 있음 -> 여기서 checkpoint(), rewind() 설명 확인)
-3. 따라서 fork-exec를 사용하는 fork-based에 비해 프로세스 생성, language runtime, library load 오버헤드가 없음
-(최근에 언급된 On-demand-fork 적용을 위해 만들어둔 Baseline의 방식을 사용하면서 함수의 core logic 실행을 fork로 하는 기법에 비해서는 프로세스 생성 오버헤드만 없음)
-====>>>>> Performace overhead의 최소화를 위한 Design 요소
 
-Private data 제거
-1. 메모리
-1) last-level page table(lpt)을 copy한 buddy page table(bpt)을 사용 (last-level page table 크기: 4K->8K, upper 4K: checkpoint() 시점의 pte 정보 기록, lower 4K: 기존대로 사용)
-2) checkpoint()에서 Write protection을 걸어둠 (CoW를 통한 이전에 사용하던 pte 및 page 변경 tracking)
-3) read fault: 새로 pte가 생성되면 pt에 pte 작성 후 bpt에 같은 값 복사
-4) write fault: anon은 pte에 erase flag를 set하고 bpt에도 같은 값 복사
-file은 shared의 경우 read와 동일 / private의 경우 pt에는 새로 받은 page에 대한 pte를 작성, bpt에는 pagecache에 해당하는 pte를 작성 후 read-only
-5) CoW(wp fault): 새로운 페이지 할당 후 pt에만 pte 작성 (어짜피 bpt에 이전 pte가 기록되어 있을 것임)
-6) rewind()에서는 erase flag가 set 되어 있으면 page zeroing, writable flag가 서로 다르면(bpt는 read-only, pt는 writable) bpt에 매핑된 page의 값을 pt에 매핑된 page로 copy
-2. 메모리 최적화
-1) VMA 재사용: anon VMA + address가 고정되지 않은 VMA는 process 내에서 잠시 사용되는 데이터를 위한 공간이며 다음 실행에서도 다시 사용될 데이터라는 가정하에 재사용
-3. 파일
-1) container process 초기화 완료 후(proxy에서 core logic 실행 대기 직전) container가 사용하는 file system 정보를 copy 하여 snapshot 생성 (checkpoint() 과정에 포함)
-(Docker의 기본 filesystem인 overlayfs2를 사용하면 해당 container process가 사용하는 base image에서 변경/추가된 파일에 대한 file system 정보만을 copy해도 됨 - 논문 설명)
-2) rewind에서는 snapshot과 container process의 base image를 바탕으로 바탕으로 변경/생성된 파일을 복구/제거
-4. 프로세스 정보
-1) checkpoint 이후 생성된 child process, thread 제거
-2) file descriptor 복구 (network socket은 file descriptor 구조체를 공유하므로 여기서 해결 가능)
-====>>>>> Security를 위한 Design 요소 + Performace overhead의 최소화 (memory)
+[Container Process Execution in Baseline and REWIND]
+1. During the proxy process execution, an additional process is created to execute the function (i.e., both the proxy and function process exist simultaneously before executing the core logic of the function).
+2. In the function execution phase, a loop listens for messages from the proxy, triggering the execution of the function’s core logic when a message is received.
+- Refer to Fig. 4 in the paper for pseudocode, which explains checkpoint() and rewind().
+3. Unlike fork-based techniques using fork-exec, this approach avoids overhead from process creation, language runtime initialization, and library loading.
+- However, compared to the fork-based technique that employs On-demand-fork for executing the function’s core logic, only the process creation overhead is reduced.
 
-최적화: 함수 코드 리팩터링
-- 함수에서 사용하는 데이터 중 개인 정보가 없는 경우(ex, 공용으로 사용하는 네트워크 스토리지의 인증정보, 동적 로딩 되는 라이브러리) globally define 시키자
 
-실험
-- R740 hpc1 서버 사용 (core가 isolation 여부 및 기타 스펙은 서버의 파일과 실험 스크립트를 참고)
-- latency: container process에서 core logic 실행 요청을 받은 후에서 다음 실행 대기가 완료되는 시점을 측정 (rewind의 경우 rewind()가 종료되는 시점 계산, result로 나온 값으로 연산 함)
-- throughput: 12 user가 20개의 요청을 동시에 보내고 이 요청이 모두 처리가 되는 시간을 계산하여 연산
-- Memory overhead: peak RSS memory를 기준으로 측정 (/proc/vmstat으로 확인 가능했던 것으로 기억)
-- 나머지 분석 값들은 모두 latency 측정하면서 같이 뽑은 값들 (몇가지는 추가 옵션 필요)
+[Private Data Removal]
+1. Memory
+ - Use a buddy page table (BPT) copied from the last-level page table (LPT).
+   > LPT size: 4K → 8K.
+   > Upper 4K stores PTE information at the checkpoint() point; lower 4K is used as usual.
+ - Apply write protection during checkpoint() (track changes to the previously used PTE and pages via CoW).
+ - Read fault: When a new PTE is created, write it to the PT and copy the same value to the BPT.
+ - Write fault:
+   > For anonymous pages, set the erase flag in the PTE and copy the same value to the BPT.
+   > For file-backed pages:
+   > Shared: same as read fault.
+   > Private: Write the new PTE for the page to the PT and record the page cache PTE in the BPT as read-only.
+ - CoW (Write-protected fault): Allocate a new page and write the PTE only to the PT (as the previous PTE will be recorded in the BPT).
+ - Rewind:
+   > Zero the page if the erase flag is set.
+   > Copy the page content from the page mapped in the BPT to the page mapped in the PT if their writable flags differ (BPT is read-only, PT is writable).
+2. Memory Optimization
+ - Reuse VMA:
+   > Anonymous VMAs and VMAs with non-fixed addresses are assumed to store temporary data for reuse in subsequent executions.
+3. File
+ - After container process initialization (just before core logic execution in the proxy), create a snapshot of the filesystem used by the container.
+   > Using OverlayFS2, only the modified/added file information relative to the base image is copied.
+ - During rewind, restore or remove modified/created files based on the snapshot and container’s base image.
+4. Process Information
+ - Remove child processes and threads created after the checkpoint.
+ - Restore file descriptors (network sockets can be addressed as they share file descriptor structures).
+
+
+[Optimization - Function Code Refactoring]
+1. If data used by the function does not contain private information (e.g., authentication info for shared network storage, dynamically loaded libraries), define it globally to avoid redundancy.
+
+
+[Experiments]
+1. Server: Dell R740 HPC1 server (refer to server files and experiment scripts for core isolation and other specifications).
+2. Latency: Measured from when the container process receives a request for core logic execution to when the next execution is ready.
+ - For REWIND, calculate based on the time when rewind() completes.
+3. Throughput: Measured as the time taken to process 20 requests simultaneously from 12 users.
+4. Memory Overhead: Measured using peak RSS memory (verified through /proc/vmstat).
+5. Other analysis metrics were extracted alongside latency measurements (some required additional options).
