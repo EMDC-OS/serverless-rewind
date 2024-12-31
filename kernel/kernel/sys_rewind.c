@@ -82,7 +82,6 @@ SYSCALL_DEFINE1(rewind, unsigned long __user, num) {
 	printk(KERN_INFO "REWIND(RW): End time=%llu, Total_time=%llu, VMA_Unmap=%llu, PTE_copy=%llu, Page_clear=%llu, Flush=%llu, ktime=%llu\n", ktime_get_real_ns(), tmp, current->rewind_unmap, current->rewind_pte, current->rewind_clear, current->rewind_flush, tmpt);
 	printk(KERN_INFO "REWIND(RW): Clear_page=%lu, Access_pte=%lu Erase_page=%lu Cow_page=%lu\n", current->rewind_page_cnt, current->rewind_pte_cnt, current->rewind_page_erase_cnt, current->rewind_page_cow_cnt);
 	printk(KERN_INFO "REWIND(vma): Total=%lu, rewinds=%lu, unused_set=%lu\n", current->rewind_total_vma, current->rewind_vma, current->rewind_unused_vma);
-	//printk(KERN_INFO "REIWND(ptw): PGD=%llu, P4D=%llu, PUD=%llu, PMD=%llu, PTE=%llu\n", current->rewind_pgdt, current->rewind_p4dt, current->rewind_pudt, current->rewind_pmdt, current->rewind_ptet);
 	printk(KERN_INFO "REWIND(alloc_vma): vma_alloc=%lu, vma_reuse=%lu\n", current->rewind_vma_alloc, current->rewind_vma_reuse);
 	printk(KERN_INFO "REWIND(reuse): %lu(current) / %lu(next)", current->rewind_reused_size, current->rewind_reusable_size);
 	current->rewind_vma_reuse = 0;
@@ -106,7 +105,6 @@ SYSCALL_DEFINE0(rewind_print) {
 	printk(KERN_INFO "REWIND(alloc_vma): vma_alloc=%lu, vma_reuse=%lu\n", current->rewind_vma_alloc, current->rewind_vma_reuse);
 	current->rewind_vma_reuse = 0;
         current->rewind_vma_alloc = 0;
-	//printk(KERN_INFO "REWIND(TIME): PF LIST TOTAL=%lu, ANON_READ=%lu, ANON_WRITE=%lu, FILE_READ=%lu, FILE_WRITE=%lu, FILE_SHARE=%lu, WP_COW=%lu, WP_REUSE=%lu, WP_FILE_REUSE=%lu\n", current->rewind_pf_cnt, current->rewind_pf_list[0], current->rewind_pf_list[1], current->rewind_pf_list[2], current->rewind_pf_list[3], current->rewind_pf_list[4], current->rewind_pf_list[5], current->rewind_pf_list[6], current->rewind_pf_list[7]);
 	return 0;
 }
 
