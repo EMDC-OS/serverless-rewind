@@ -1824,6 +1824,84 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 
                 }
         }
+	/* REWIND: reuse rewound anonymous VMA */
+	if (mm->owner && mm->owner->rewind_cnt > 0 && !file && (vm_flags & VM_NO_ADDR)) {
+		struct vm_area_struct *iter_vma;
+		struct vm_area_struct *rsrv_vma = NULL;
+		long rsrv_diff, iter_diff;
+		
+		for (iter_vma = mm->mmap; iter_vma; iter_vma = iter_vma->vm_next) {
+			if (iter_vma->rewind_used == 0
+					&& iter_vma->rewindable == 1
+					&& !iter_vma->vm_file
+					&& iter_vma->rewind_flags == (vm_flags & ~(VM_NO_ADDR))) {
+				if (len == (iter_vma->vm_end - iter_vma->vm_start)) {
+					addr = iter_vma->vm_start;
+					iter_vma->rewind_used = 1;
+					iter_vma->vm_flags = (vm_flags & (~(VM_NO_ADDR)));
+					iter_vma->rewind = mm->owner->rewind_cnt;
+					vma = iter_vma;
+					reuse_vma_clear(vma);
+					
+					mm->owner->rewind_vma_reuse++;
+					mm->owner->rewind_reused_size += vma->anon_size;
+					
+					goto reuse;
+				} else {
+					if (rsrv_vma == NULL) {
+						rsrv_vma = iter_vma;
+						rsrv_diff = abs((rsrv_vma->vm_end - rsrv_vma->vm_start) - len);
+					} else {
+						iter_diff = abs((iter_vma->vm_end - iter_vma->vm_start) - len);
+						if (rsrv_diff > iter_diff) {
+							rsrv_vma = iter_vma;
+							rsrv_diff = iter_diff;
+						}
+					}
+				}
+			}
+		}
+
+		/* Check mremap */
+		if (rsrv_vma != NULL) {
+			unsigned long old_len = rsrv_vma->vm_end - rsrv_vma->vm_start;
+			long size_diff = len - old_len;
+			
+			if (size_diff > 0) {
+				unsigned long new_addr;
+				new_addr = rewind_mremap(rsrv_vma->vm_start, old_len, len, MREMAP_MAYMOVE, 0);
+				printk(KERN_INFO "new_addr: %lu\n", new_addr);
+				if (!IS_ERR_VALUE(new_addr)) {
+					struct vm_area_struct *new_vma = find_vma(mm, new_addr);
+					
+					addr = new_vma->vm_start;
+					new_vma->rewind_used = 1;
+					new_vma->vm_flags = (vm_flags & (~(VM_NO_ADDR)));
+					new_vma->rewind = mm->owner->rewind_cnt;
+					vma = new_vma;
+					reuse_vma_clear(vma);
+					
+					mm->owner->rewind_vma_reuse++;
+					mm->owner->rewind_reused_size += vma->anon_size;
+					
+					goto reuse;
+				}
+			} else {
+				addr = rsrv_vma->vm_start;
+				rsrv_vma->rewind_used = 1;
+				rsrv_vma->vm_flags = (vm_flags & (~(VM_NO_ADDR)));
+				rsrv_vma->rewind = mm->owner->rewind_cnt;
+				
+				vma = rsrv_vma;
+				reuse_vma_clear(vma);
+				
+				mm->owner->rewind_vma_reuse++;
+				mm->owner->rewind_reused_size += vma->anon_size;
+				
+				goto reuse;
+			}
+		}
+	}
 	
 	/*
 	 * Can we just expand an old mapping?
