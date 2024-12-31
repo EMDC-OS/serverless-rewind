@@ -87,6 +87,8 @@
 
 #include "internal.h"
 
+#define REWIND_AREA	512
+
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
 #endif
@@ -1048,10 +1050,10 @@ again:
 		remove_upper = 0;
 		if (pte_none(ptent)) {
 			if (mm->rewindable == 1) { 
-				pte_t tmp = *(pte+512);
+				pte_t tmp = *(pte+REWIND_AREA);
 				if (pte_flags(tmp) & _PAGE_PRESENT) {
 					upper_pgt = 1;
-					pte = pte+512;
+					pte = pte+REWIND_AREA;
 					ptent = *pte;
 				} else
 					continue;
@@ -1061,17 +1063,17 @@ again:
 		}
 upper:
 		if (remove_upper == 1) {
-			//printk(KERN_INFO "REWIND(zap): upper pte 0x%lx erase\n", (pte+512)->pte);
+			//printk(KERN_INFO "REWIND(zap): upper pte 0x%lx erase\n", (pte+REWIND_AREA)->pte);
 			remove_upper = 0;
 			upper_pgt = 1;
-			pte = pte+512;
+			pte = pte+REWIND_AREA;
 			ptent = *pte;
 		}
 			
 		if (mm->rewindable == 1/*current->rewind_cnt > 0*/ && upper_pgt == 0) {
-			if (pte_pfn(*pte) == pte_pfn(*(pte+512))) {
-				pte_clear(mm, addr, pte+512);
-			} else if (!pte_none(*(pte+512))) {
+			if (pte_pfn(*pte) == pte_pfn(*(pte+REWIND_AREA))) {
+				pte_clear(mm, addr, pte+REWIND_AREA);
+			} else if (!pte_none(*(pte+REWIND_AREA))) {
 				remove_upper = 1;
 			}
 		}
@@ -1161,7 +1163,7 @@ check:
 		if (remove_upper == 1)
 			goto upper;
 		if (upper_pgt == 1)
-			pte = pte-512;
+			pte = pte-REWIND_AREA;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 
 	add_mm_rss_vec(mm, rss);
@@ -2382,10 +2384,10 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 
 	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
 		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
-			if (pte_write(*((vmf->pte)+512)) && (pte_flags(*((vmf->pte)+512)) & _PAGE_SOFTW2)) {
+			if (pte_write(*((vmf->pte)+REWIND_AREA)) && (pte_flags(*((vmf->pte)+REWIND_AREA)) & _PAGE_SOFTW2)) {
 				count_vm_event(REWIND_PF_WP_COPY_REUSE);
 				current->rewind_reused_page++;
-				new_page = pte_page(*((vmf->pte)+512));
+				new_page = pte_page(*((vmf->pte)+REWIND_AREA));
 				// zeroing new_page (does not zeroed)
 				clear_page(page_address(new_page));
 				reused = 1;
@@ -2403,7 +2405,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 			goto oom;
 
 		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
-			set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+512, *vmf->pte);
+			set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+REWIND_AREA, *vmf->pte);
 			if (old_page) {
 				put_page(old_page);
 				old_page = NULL;
@@ -2413,18 +2415,18 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	} else {
 		// Only else statement was exist
 		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
-			pte_t clone_pte = *((vmf->pte)+512);
+			pte_t clone_pte = *((vmf->pte)+REWIND_AREA);
 			if (pte_flags(*vmf->pte) & _PAGE_SOFTW2) {
 				// Forked process's writable page was changed to read-only page
 				// Need to return page and get new pages
 				new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
                                         vmf->address);
-				if (pte_write(*((vmf->pte) + 512))) {
+				if (pte_write(*((vmf->pte) + REWIND_AREA))) {
 					// Does not have original read-only pte
 					rewind_fork = 1;
 				}
 			}
-			else if (pte_write(*((vmf->pte) + 512))) {
+			else if (pte_write(*((vmf->pte) + REWIND_AREA))) {
 				count_vm_event(REWIND_PF_WP_COPY_REUSE);
 				current->rewind_reused_page++;
 				new_page = pte_page(clone_pte);
@@ -2449,7 +2451,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 
 		if ((mm->owner->rewindable == 1) && (mm->owner->rewind_cp == 0)) {
                         if (become_null == 1) {
-                                set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+512, *vmf->pte);
+                                set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+REWIND_AREA, *vmf->pte);
                                 if (old_page) {
                                         put_page(old_page);
                                         old_page = NULL;
@@ -2510,7 +2512,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		 */
 		set_pte_at_notify(mm, vmf->address, vmf->pte, entry);
 		if (rewind_fork == 1)
-			set_pte_at(mm, vmf->address, (vmf->pte)+512, entry);
+			set_pte_at(mm, vmf->address, (vmf->pte)+REWIND_AREA, entry);
 		update_mmu_cache(vma, vmf->address, vmf->pte);
 		if (old_page) {
 			/*
@@ -3211,7 +3213,7 @@ setpte:
 		entry = pte_set_flags(entry, _PAGE_SOFTW2);
 		set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
 		//set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+PAGE_SIZE, entry);
-		memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+		memcpy((vmf->pte)+REWIND_AREA, vmf->pte, sizeof(pte_t));
 	}
 	else
 		set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
@@ -3678,8 +3680,8 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 
 	// Read fault simply copy the pte
 	if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
-		if (!(pte_flags(*((vmf->pte)+512)) & _PAGE_SOFTW2)) {
-			memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+		if (!(pte_flags(*((vmf->pte)+REWIND_AREA)) & _PAGE_SOFTW2)) {
+			memcpy((vmf->pte)+REWIND_AREA, vmf->pte, sizeof(pte_t));
 		}
  	}
 	
@@ -3703,7 +3705,7 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 
 	if (vma->vm_mm->owner->rewind_cnt > 1) { // After first rewind
 		clone_pte = pte_offset_map(vmf->pmd, vmf->address);
-		clone_pte = clone_pte + 512;
+		clone_pte = clone_pte + REWIND_AREA;
 		if (pte_none(*clone_pte)) {
 			vmf->cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, vmf->address);
 			vmf->reuse_pg = 0;
@@ -3745,7 +3747,7 @@ static vm_fault_t do_cow_fault(struct vm_fault *vmf)
 		pte_t entry = *vmf->pte;
 		entry = pte_set_flags(entry, _PAGE_SOFTW2);
                 set_pte_at(vma->vm_mm, vmf->address, vmf->pte, entry);
-		memcpy((vmf->pte)+512, vmf->pte, sizeof(pte_t));
+		memcpy((vmf->pte)+REWIND_AREA, vmf->pte, sizeof(pte_t));
 	}
 		
 	if (unlikely(ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY)))
@@ -3796,7 +3798,7 @@ static vm_fault_t do_shared_fault(struct vm_fault *vmf)
         if ((vma->vm_mm->owner->rewindable == 1) && (vma->vm_mm->owner->rewind_cp == 0)) {
                 //printk(KERN_INFO "REWIND(share): shared fault copy\n");
 		//set_pte_at(vma->vm_mm, vmf->address, (vmf->pte)+PAGE_SIZE, *vmf->pte);
-                memcpy((vmf->pte)+512, vmf->pte, 8);
+                memcpy((vmf->pte)+REWIND_AREA, vmf->pte, 8);
         }
 
 	fault_dirty_shared_page(vma, vmf->page);
@@ -4934,7 +4936,7 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 		//__lock_page(pg);		
                 if (rewind_flag == 1) {
 			tmp = rdtsc();
-			pte_t *rpte = pte+512;
+			pte_t *rpte = pte+REWIND_AREA;
 			if (pte_write(*rpte)) {
 				if (!(pte_flags(*rpte) & _PAGE_SOFTW2))
 					printk(KERN_INFO "REWIND(pte): Not rewindable rewind pte(w)... 0x%lx / 0x%lx \n",pte_val(*pte),pte_val(*rpte));
@@ -5023,7 +5025,7 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 		}
                 else {
 			set_pte_at(mm, addr, pte, pte_wrprotect(*pte));
-                        memcpy(pte+512, pte, sizeof(pte_t));
+                        memcpy(pte+REWIND_AREA, pte, sizeof(pte_t));
                 }
 		current->rewind_pte_cnt++;
 		//unlock_page(pg);
