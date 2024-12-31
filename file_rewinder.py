@@ -86,7 +86,9 @@ class REWINDER:
         self.rewind = []
         self.lower_link = []
 
-        self.log_file = open("/home/user01/rewind_workload/results/file_rewinder.txt", "a")
+        # Example - file_path="/home/user01/rewind_workload/results/file_rewinder.txt"
+        file_path=
+        self.log_file = open(file_path, "a")
         self.rm_size = 0
         self.restore_size = 0
         self.rm_entries = 0
