@@ -44,26 +44,14 @@ else:
 
 file_sock.send(CHK.encode('utf-8'))
 
-#fds = os.popen("ls -al /proc/"+str(os.getpid())+"/fd >> /root/ow_test/prev").read()
-
 while True:
     syscall(548, 1)
-    #syscall(551)
 
     param = sock.recv(1024).decode('utf-8')
 
-    #rss = os.popen("cat /proc/"+str(os.getpid())+"/status | grep RSS").read()
     result = func.main(json.loads(param))
-    #result["RSS-1"] = rss
-    #result["RSS-2"] = os.popen("cat /proc/"+str(os.getpid())+"/status | grep RSS").read()
     result["RSS"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    #cnt = cnt+1
 
-    #result["fd"] = fds
-    #os.close(5)
-    #os.close(6)
-    #dump = os.popen("ls -al /proc/"+str(os.getpid())+"/fd >> /root/ow_test/then").read()
-    #time.sleep(2)
     sendData = json.dumps(result)
     sock.send(sendData.encode('utf-8'))
     
