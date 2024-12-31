@@ -4932,8 +4932,6 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 		copy_page = 0;
 		clearing = 0;
 
-		//pg = pte_page(*pte);
-		//__lock_page(pg);		
                 if (rewind_flag == 1) {
 			tmp = rdtsc();
 			pte_t *rpte = pte+REWIND_AREA;
@@ -4943,7 +4941,6 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 				if (pte_pfn(*rpte) != pte_pfn(*pte)) {
 					if (pte_write(*pte)) {
 						// w-w' Rewindable write page is erased...
-						printk(KERN_INFO "REWIND(pte): writable rewind page erased... 0x%lx / 0x%lx \n",pte_val(*pte),pte_val(*rpte));
 					}
 					// w-r Nothing to do
 				}
@@ -4969,7 +4966,6 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 			}
 			else {
 				if (pte_flags(*rpte) & _PAGE_SOFTW2) {
-                                        //printk(KERN_INFO "REWIND(pte): Rewindable rewind pte(r)... 0x%lx / 0x%lx\n", pte_val(*pte),pte_val(*rpte));
 					// May be zero page ...?
 				}
 				if (pte_pfn(*rpte) != pte_pfn(*pte)) {
@@ -4982,18 +4978,12 @@ unsigned long rewind_pte_walk(struct mmu_gather *tlb, struct vm_area_struct *vma
 					else {
 						// r-w0 switch and clearing -> copy data into writable page (previous method)
 						// simply copy original data into cow page
-						//clearing = 1;
-						//pte_t tmp = *rpte;
-						//current->rewind_page_reuse++;
-                	                        //set_pte_at(mm, addr, rpte, *pte);
-		                                //set_pte_at(mm, addr, pte, tmp);
 						copy_page = 1;
 					}
 				}
 				else {
 					if (pte_write(*pte)) {
 						// r-w but same pfn...
-						printk(KERN_INFO "REWIND(pte): Something wrong at wp 0x%lx / 0x%lx\n", pte_val(*pte),pte_val(*rpte));
 					}
 					else {
 						// r-r update status (flags)
