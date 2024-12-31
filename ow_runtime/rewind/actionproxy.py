@@ -119,13 +119,8 @@ class ActionRunner:
                 return False
         
         if prep():
-            #debug("Send - actionproxy\n")
-            #f = open('/root/ow_test/test.txt','w')
-            #f.write(msg)
-            #f.close()
             self.connectionSock.send(bytes("init", 'utf-8'))
             init_err = self.connectionSock.recv(1024).decode('utf-8')
-            #debug("Get - actionproxy" + str(init_err) + "\n")
             if str(init_err) != 'success':
                 return False
             try:
@@ -141,7 +136,6 @@ class ActionRunner:
                 return False
         
         # verify the binary exists and is executable
-        #debug("Verify failed if error message got\n")
         return self.verify()
 
     # optionally appends source to the loaded code during <init>
