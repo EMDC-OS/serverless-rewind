@@ -1,11 +1,17 @@
-Step to execute
-0. ./zip.sh
-Latency
-1. ./run.sh
-Throughput
-1. ./throughput.sh
+[Step to execute]
+
+- Prerequisite
+$./zip.sh
+
+- Latency
+$ ./run.sh
+
+- Throughput
+$ ./throughput.sh
+
 (if not finished within one minute)
-2. ./get_unfinished.sh
-3. copy results and put in "get_ends.sh"
-4. ./get_ends.sh
-5. exchange time data to result of "./get_ends.sh"
+$ ./get_unfinished.sh
+
+$ ./get_ends.sh (copy results and put in "get_ends.sh")
+
+exchange time data to result of "./get_ends.sh"
